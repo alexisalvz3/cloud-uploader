@@ -12,7 +12,7 @@ usage() {
     echo
     echo "Example:"
     echo "  $0 /path/to/myfile.txt my-bucket"
-}
+}echo $PATH
 
 # check if correct number of arguments are passed
 
@@ -31,6 +31,9 @@ if [ ! -f "$file_path" ]; then
     echo "Error: File does not exist: $file_path"
     exit 1
 fi
+
+# Get file size
+file_size=$(du -h "$file_path" | cut -f1)
 
 # check if AWS CLI is installed on the system
 
@@ -52,19 +55,43 @@ if ! aws s3 ls &> /dev/null; then
     exit 1
 fi
 
-# actual file upload process
-
-# pipe the output to a while loop that continuously updates the same line
-aws s3 cp "$file_path" "s3://$s3_bucket/$(basename "$file_path")" --progress 2>&1 | {
-    while IFS= read -r line; do
-        echo -ne "\r$line"
+# Function to show a simple spinner
+spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf " [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\b\b\b\b\b\b"
     done
-    echo
+    printf "    \b\b\b\b"
 }
-exit_status=${PIPESTATUS[0]}
 
-if [ $exit_status -eq 0 ]; then
+
+
+# Perform the upload process
+echo "Uploading $file_path (Size: $file_size) to s3://$s3_bucket/$(basename "$file_path")..."
+
+# grabbing time to find upload duration
+start_time=$(date +%s)
+
+#cp file into s3 bucket
+aws s3 cp "$file_path" "s3://$s3_bucket/$(basename "$file_path")" > /dev/null 2>&1 &
+spinner $!
+
+end_time=$(date +%s)
+
+# showing exit status to user
+if [ $? -eq 0 ]; then
+    duration=$((end_time - start_time))
+    file_size_bytes=$(wc -c < "$file_path")
+    speed=$(echo "scale=2; $file_size_bytes / $duration / 1048576" | bc)
     echo "Successfully uploaded $file_path to s3://$s3_bucket/$(basename "$file_path")"
+    echo "Time taken: $duration second(s)"
+    echo "Average speed: $speed MB/s"
 else
     echo "Failed to upload file. Please check your AWS configuration and try again."
     exit 1
